@@ -1,0 +1,652 @@
+package edu.upenn.cis.cis455.webserver;
+
+import org.apache.log4j.Logger;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Date;
+import java.net.Socket;
+import java.net.InetAddress;
+import java.io.*;
+import java.net.URLDecoder;
+import java.net.URLEncoder;
+import java.util.*;
+import java.text.SimpleDateFormat;
+
+/**
+ * Class for Worker thread.
+ * 
+ * Worker Thread reads Socket Objects from the shared queue as long as it is not empty.
+ * After Reading the objects, it will process the client requests and send the response.
+ */
+@SuppressWarnings("unused")
+public class WorkerThread extends Thread {
+
+	// Using log4j framework for logging
+	static final Logger logger = Logger.getLogger(WorkerThread.class);
+	protected ArrayList<Socket> sharedQueue;
+	protected ArrayList<Thread> threadPool;
+	//protected Socket clientSocket = null;
+	protected HashMap<String, String> mapRequestData = null;
+	// to check that if head request is created , return only HTTP response headers
+	boolean isHead = false;
+	boolean isExpect = false;
+
+	protected enum FileTypes {
+		jpg , png , gif , txt , html ;
+	}
+
+	public WorkerThread (ArrayList<Socket> sharedQueue, ArrayList<Thread> threadPool)
+	{
+		this.sharedQueue = sharedQueue;
+		this.threadPool = threadPool;
+	}
+
+	/**
+	 * Method to read from the queue.
+	 * @return - element read from queue
+	 * @throws InterruptedException
+	 */
+	private Socket readFromQueue() throws InterruptedException {
+		while (sharedQueue.isEmpty()) {
+			//If the queue is empty, we push the current thread to waiting state. Way to avoid polling.
+			synchronized (sharedQueue) {
+				logger.info(" [Ouput from log4j] Queue is currently empty ");
+				System.out.println(" [Ouput from log4j] Queue is currently empty ");
+				sharedQueue.wait();
+			}
+		}
+		//Otherwise consume element and notify waiting producer
+		synchronized (sharedQueue) {
+			Socket clientSocket = (Socket) sharedQueue.remove(0);
+			sharedQueue.notifyAll();
+			logger.info(" [Output from log4j] Client socket dequeued for processing " + clientSocket);
+			System.out.println(" [Output from log4j] Client socket dequeued for processing " + clientSocket);
+			return clientSocket;
+		}
+	}
+
+	public void run() {
+		// write code to read from queue and call function to process request
+		// change method to call processRequest in synchronized loop
+		while (! threadPool.isEmpty()){
+			try{
+				Socket clientSocket = null;
+				clientSocket = readFromQueue();
+				this.processRequest(clientSocket);
+
+				//closing the socket after processing of request
+				try{
+					clientSocket.close();
+				}
+				catch (Exception ex){
+					logger.error(" [Output from log4j] Error closing client Socket " + ex);
+					System.err.println(" [Output from log4j] Error closing client Socket " + ex);
+				}
+			}
+			catch(Exception e){
+				logger.error(" [Output from log4j] Error dequeueing client request " + e);
+				System.err.println(" [Output from log4j] Error dequeueing client request " + e);
+			}
+		}
+	}
+
+	public void processRequest(Socket clientSocket) {
+		// write code to process the incoming requests
+		logger.info(" [Output from log4j] Entering processRequest function");
+		System.out.println(" [Output from log4j] Entering processRequest function");
+
+		BufferedReader brObj = null;
+		StringBuffer requestData = new StringBuffer("");
+		try {
+			brObj = new BufferedReader (new InputStreamReader (clientSocket.getInputStream()));
+			String line = null;
+			while ((line=brObj.readLine()).length() != 0){
+				logger.info(" [Output from log4j] Data Recieved for processing "+ line.toString());
+				System.out.println(" [Output from log4j] Data Recieved for processing "+ line.toString());
+				requestData.append(line + "\t");
+			}	
+			logger.info(" [Output from log4j] Data from Input Reader captured.");
+			System.out.println(" [Output from log4j] Data from Input Reader captured.");
+		}
+		catch (IOException e) {
+			// TODO Auto-generated catch block
+			//e.printStackTrace();
+			logger.error(" [Output from log4j] Error reading client request " + e);
+			System.err.println(" [Output from log4j] Error reading client request " + e);
+		}
+		// to close connection if the data is empty in the clientSocket
+		if (requestData.equals("")){
+			return;
+		}
+
+		logger.info(" [Output from log4j] Client Socket Data for processing " + requestData);
+		System.out.println(" [Output from log4j] Client Socket Data for processing " + requestData);
+
+		boolean isCorrect = this.hashRequestData(requestData.toString(), clientSocket);
+		if(isCorrect){ 
+			this.createRespone(clientSocket);
+		}
+		return;
+	}
+
+	public void createRespone (Socket clientSocket) {
+		// fetch values from HashMap
+		String requestMethod = null;
+		String requestPath = null;
+		String requestVersion = null;
+		try{
+			for (@SuppressWarnings("rawtypes") Map.Entry map: this.mapRequestData.entrySet()){
+				if((String) map.getKey() == "Method"){
+					requestMethod = map.getValue().toString();
+					logger.info(" [Output from log4j] Data captured for Response Header : Method : " + requestMethod );
+					System.out.println(" [Output from log4j] Data captured for Response Header : Method : " + requestMethod );
+				}
+				else if((String) map.getKey() == "Path"){
+					requestPath = map.getValue().toString();
+					logger.info(" [Output from log4j] Data captured for Response Header : Path : " + requestPath );
+					System.out.println(" [Output from log4j] Data captured for Response Header : Path : " + requestPath );
+				}
+				else if((String) map.getKey() == "Version"){
+					requestVersion = map.getValue().toString();
+					logger.info(" [Output from log4j] Data captured for Response Header : Version : " + requestVersion );
+					System.out.println(" [Output from log4j] Data captured for Response Header : Version : " + requestVersion );
+				}
+			}
+
+			// creating Hash Map to store values for Thread and corresponding Path
+			Thread currentThread = Thread.currentThread();
+			DaemonThread.mapThreadRequestData.put(currentThread.getName(), requestPath);
+
+			if (requestMethod.toLowerCase().equals("get") || requestMethod.toLowerCase().equals("head")){
+				if (requestMethod.toLowerCase().equals("head")){
+					isHead = true;
+				}
+				String hostName = null;
+				// for compliance with HTTP 1.1 requests
+				if(requestVersion.equalsIgnoreCase("HTTP/1.1")) {
+					if((this.mapRequestData.containsKey("Expect"))) {
+						isExpect = true;
+					}
+					if ((hostName = this.mapRequestData.get("Host")).length() == 0){
+						System.err.println(" [Output from log4j] Error while loading the requested file : Bad Request");
+						int errorStatusCode = 400;  
+						this.createErrorResponse(errorStatusCode, requestVersion, clientSocket);
+					}
+					else{
+						this.fetchRequestForm(requestPath, requestVersion, clientSocket);
+					}
+				}
+				else{
+					this.fetchRequestForm(requestPath, requestVersion, clientSocket);
+				}
+			}
+			else {
+				// handle error case for Not Implemented
+				System.err.println(" [Output from log4j] Error while loading the requested file : FILE NOT FOUND");
+				int errorStatusCode = 501;  
+				this.createErrorResponse(errorStatusCode, requestVersion, clientSocket);
+
+			}
+		}
+		catch(Exception e){
+			logger.error(" [Output from log4j] Error While capturing data for Response Header " + e );
+			System.err.println(" [Output from log4j] Error While capturing data for Response Header " + e );
+		}
+	}
+
+	@SuppressWarnings("deprecation")
+	public void fetchRequestForm (String requestPath , String requestVersion , Socket clientSocket){
+		String absoluteFilePath = null;
+		requestPath = requestPath.replace("%20", " ");
+		int errorStatusCode; 
+		try {
+			if(requestPath.length() == 0 ){
+				// call function to recursively call and get contents of root directory.
+				int defaultDirType = 1;
+				absoluteFilePath = DaemonThread.homeDirectory + "/";
+				//this.getDirectoryContents(URLDecoder.decode(absoluteFilePath, "UTF-8"), requestVersion, clientSocket, defaultDirType);
+				this.getDirectoryContents(URLDecoder.decode(absoluteFilePath), requestVersion, clientSocket, defaultDirType);
+				//this.getDirectoryContents(absoluteFilePath, requestVersion, clientSocket, defaultDirType);
+			}
+			else if (requestPath.length() == 1 ){
+				if (requestPath.equals("/")){
+					// call function to recursively call and get contents of root directory.
+					int defaultDirType = 1;
+					absoluteFilePath = DaemonThread.homeDirectory + requestPath;
+					//this.getDirectoryContents(URLDecoder.decode(absoluteFilePath, "UTF-8"), requestVersion, clientSocket, defaultDirType);
+					this.getDirectoryContents(URLDecoder.decode(absoluteFilePath), requestVersion, clientSocket, defaultDirType);
+					this.getDirectoryContents(absoluteFilePath, requestVersion, clientSocket, defaultDirType);
+				}
+			}
+			else {
+				boolean isSpecialCase = false;
+				if (requestPath.equalsIgnoreCase("/shutdown")) {
+					// function to call graceful shutdown to the system!!
+					isSpecialCase = true;
+				}
+				else if (requestPath.equalsIgnoreCase("/control")) {
+					// function to display the control panel for the server..
+					isSpecialCase = true;
+					this.fetchControlPanel(requestVersion, clientSocket);
+				}
+				if (! isSpecialCase ){
+					absoluteFilePath = DaemonThread.homeDirectory + requestPath;
+					boolean isExist = true;
+					if (! (new File(absoluteFilePath).exists()) ) {
+						// call function to generate File Not Found Error
+						System.err.println(" [Output from log4j] Error while loading the requested file : FILE NOT FOUND");
+						errorStatusCode = 404;  
+						this.createErrorResponse(errorStatusCode, requestVersion, clientSocket);
+						isExist = false;
+					}
+					if(isExist){
+						if ( new File(absoluteFilePath).isDirectory() ){
+							// call function  to get contents of the current directory
+							int defaultDirType = 0;
+							//this.getDirectoryContents(URLDecoder.decode(absoluteFilePath, "UTF-8"), requestVersion, clientSocket, defaultDirType);
+							this.getDirectoryContents(URLDecoder.decode(absoluteFilePath), requestVersion, clientSocket, defaultDirType);
+							this.getDirectoryContents(absoluteFilePath, requestVersion, clientSocket, defaultDirType);
+						}
+						else if ( new File(absoluteFilePath).isFile() ){
+							// call function to get contents of file 
+							//this.createFileResponse(URLDecoder.decode(absoluteFilePath, "UTF-8"), requestVersion, clientSocket);
+							this.createFileResponse(URLDecoder.decode(absoluteFilePath), requestVersion, clientSocket);
+							this.createFileResponse(absoluteFilePath, requestVersion, clientSocket);
+						}
+					}
+				}
+			}
+		}
+		catch ( Exception e ) {
+			logger.error(" [Output from log4j] Error while checking type of request path " + e);
+			System.err.println(" [Output from log4j] Error while checking type of request path " + e);
+		}
+	}
+
+	public void fetchControlPanel (String requestVersion , Socket clientSocket) {
+		try{
+			// creating header for control panel 
+			String htmlResponse = "<!DOCTYPE html><html><head><title>My Control Panel</title></head><body>";
+			htmlResponse += "<font color = '#660033'><h1 align='middle'>ERIS 1.0</h1><hr></font>";
+			htmlResponse += "<p><font color = '#0033CC'>";
+			htmlResponse += "<h4 align='middle' padding = '0' margin = '0'>Server Owner : Aakriti Singla<br/>";
+			htmlResponse += "SEAS Login Account : aakritis@seas.upenn.edu</h4><hr>";
+
+			// starting display for thread details 
+			htmlResponse += "<br/>";
+			htmlResponse += "<table style = 'width:100%; height:100%'> <tr>";
+			htmlResponse += "<td align = 'center'>Thread-Name</td> <td align = 'center'>Thread-Current-State</td><td align = 'center'>Thread-Request-Url</td></tr>";
+
+			// accessing Thread Pool Data through Iterator Class
+			@SuppressWarnings("rawtypes")
+			Iterator iThread = DaemonThread.threadPool.iterator();
+			while (iThread.hasNext()){
+				htmlResponse += "<tr>";
+				Thread thread = (Thread) iThread.next();
+				String threadName = thread.getName();
+				State threadState = thread.getState();
+				int state = 0;
+				String threadURL = "No Request";
+				if(threadState.toString().toLowerCase().equals("runnable")){
+					state = 1;
+					threadURL = DaemonThread.mapThreadRequestData.get(Thread.currentThread().getName().toString());
+				}
+				else{
+					state = 0;
+				}
+				if( state == 1){
+					htmlResponse += "<td align = 'center'><font color = '#009933'>" + threadName + "</font></td><td align = 'center'><font color = '#009933'>" + threadState + "</font></td><td align = 'center'><font color = '#009933'>" + threadURL + "</font></td></tr>";
+				}
+				else{
+					htmlResponse += "<td align = 'center'><font color = '#FF5050'>" + threadName + "</font></td><td align = 'center'><font color = '#FF5050'>" + threadState + "</font></td><td align = 'center'><font color = '#FF5050'>" + threadURL +"</font></td></tr>";
+				}
+			}		
+			htmlResponse += "</p></font></body></html>";
+			byte [] defaultHTMLBytes = new byte[(int)htmlResponse.length()];
+			defaultHTMLBytes = htmlResponse.getBytes();
+
+			// update contentLength 
+			int contentLength = htmlResponse.length();
+			String contentType = "text/html";
+			//Date currentDate = new Date();
+			//String date = currentDate.toString();
+			String date = this.getCurrentDate();
+
+			String responseHeader = "";
+			if (isExpect) {
+				responseHeader += requestVersion + "100 Continue\r\n";
+			}
+			responseHeader += requestVersion + " 200 OK\r\n" + "Date: " + date + "\r\n" + "Content-Type: " + contentType + "\r\n" + "Content-Length: " + contentLength + "\r\n" + "Connection: close\r\n" + "\n";
+			System.out.println(" [Output from log4j] Response Header : " + responseHeader);
+
+			DataOutputStream dout = new DataOutputStream (clientSocket.getOutputStream());
+			dout.writeUTF(responseHeader);
+			if (! isHead){
+				dout.write(defaultHTMLBytes);
+			}
+			dout.flush();
+			dout.close();		
+		}
+		catch (Exception e) {
+			logger.error(" [Output from log4j] Error while displaying contents of Control Page " + e );
+			System.err.println(" [Output from log4j] Error while displaying contents of Control Page " + e );
+		}
+	}
+
+	public String getCurrentDate(){
+		SimpleDateFormat formatDate = new SimpleDateFormat("EEE,dd MMM yyyy HH:mm:ss");
+		formatDate.setTimeZone(TimeZone.getTimeZone("GMT"));
+		String currentDate = formatDate.format(new Date()).toString()+" GMT";
+		return currentDate;
+	}
+
+	public void getDirectoryContents ( String absoluteFilePath, String requestVersion , Socket clientSocket , int defaultDirType) {
+		try{
+			File directoryPath = new File (absoluteFilePath);
+			String dirPath = directoryPath.getCanonicalPath();
+			String[] dirName = dirPath.split("/");
+			File[] directoryContent = directoryPath.listFiles();
+			// creating response page for listing directory contents 
+			String htmlResponse = "<!DOCTYPE html><html><head><title>My Directory Listing</title></head><body><font color = '#0033CC'>";
+			boolean isBackButton = true;
+			if(defaultDirType == 1){
+				htmlResponse = htmlResponse + "<h2 align='middle'>Directory Listing For : ROOT" + "</h2>" + "<hr>";
+				isBackButton = false;
+			}
+			else{
+				htmlResponse = htmlResponse + "<h2 align ='middle'>Directory Listing For : " + dirName[dirName.length - 1] + "</h2>" + "<hr>";		
+			}
+			htmlResponse = htmlResponse + "<br/><p><h4>";
+			if(isBackButton){
+				String previousDirPath = dirPath.replace(dirName[(dirName.length-1)], "");
+				previousDirPath = previousDirPath.replace(DaemonThread.homeDirectory, "");
+				String localAddress = InetAddress.getLocalHost().getHostAddress();
+				String displayURL = "http://" + localAddress + ":" + DaemonThread.serverPort + previousDirPath;
+				htmlResponse += "<a href = ' " + displayURL + "'>Back</a><br/><br/>";
+			}
+
+			for ( File file : directoryContent ) {
+				String filePath = file.getCanonicalPath();
+				String[] name = filePath.split("/");
+				if(file.isDirectory()) {
+					htmlResponse = htmlResponse + "<font color = '#009933'>Sub-Directory : ";
+					// create reference link
+
+					String subFilePath = filePath.replace(DaemonThread.homeDirectory, "");
+					//subFilePath = URLEncoder.encode(subFilePath, "UTF-8");
+					//subFilePath = URLEncoder.encode(subFilePath);
+					String localAddress = InetAddress.getLocalHost().getHostAddress();
+					String displayURL = "http://" + localAddress + ":" + DaemonThread.serverPort + subFilePath;
+					htmlResponse = htmlResponse + "<a href = '" + displayURL + "'>";
+					htmlResponse = htmlResponse + name[name.length - 1] + "</a></font><br/>";
+				}
+				else{
+					htmlResponse = htmlResponse + "<font color = '#FF5050'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;File : ";
+					htmlResponse = htmlResponse + name[name.length - 1] + "</font><br/>";
+				}
+			}
+			htmlResponse = htmlResponse + "</h4></p></font></body></html>";
+
+			byte [] defaultHTMLBytes = new byte[(int)htmlResponse.length()];
+			defaultHTMLBytes = htmlResponse.getBytes();
+
+			// update contentLength 
+			int contentLength = htmlResponse.length();
+			String contentType = "text/html";
+			//Date currentDate = new Date();
+			//String date = currentDate.toString();
+			String date = this.getCurrentDate();
+
+			String responseHeader = "";
+			if (isExpect) {
+				responseHeader += requestVersion + "100 Continue\r\n";
+			}
+			responseHeader += requestVersion + " 200 OK\r\n" + "Date: " + date + "\r\n" + "Content-Type: " + contentType + "\r\n" + "Content-Length: " + contentLength + "\r\n" + "Connection: close\r\n" + "\n";
+			System.out.println(" [Output from log4j] Response Header : " + responseHeader);
+
+			DataOutputStream dout = new DataOutputStream (clientSocket.getOutputStream());
+			dout.writeUTF(responseHeader);
+			if(! isHead){
+				dout.write(defaultHTMLBytes);
+			}
+			dout.flush();
+			dout.close();		
+		}
+		catch (Exception e){
+			logger.error(" [Output from log4j] Error while displaying contents of requested directory " + e );
+			System.err.println(" [Output from log4j] Error while displaying contents of requested directory " + e );
+		}
+	}
+
+	public void createErrorResponse ( int errorStatusCode, String requestVersion, Socket clientSocket ) {
+		try{
+			String contentType = "text/html";
+			//Date currentDate = new Date();
+			//String date = currentDate.toString();
+			String date = this.getCurrentDate();
+			String errorStatusMsg = null;
+			int contentLength = 0;
+
+			switch (errorStatusCode) {
+			case 404 :
+				errorStatusMsg = "Not Found";
+				break;
+			case 403 :
+				errorStatusMsg = "Forbidden";
+				break;
+			case 501 :
+				errorStatusMsg = "Not Implemented";
+				break;
+			case 505 :
+				errorStatusMsg = "HTTP Version Not Supported";
+				break;
+			case 400 :
+				errorStatusMsg = "Bad Request";
+				break;
+			} 
+
+			// create HTML response 
+			String htmlResponse = "<!DOCTYPE html><html><head><title>Error Page</title></head><body><font color = '#0033CC'><h1>HTTP Error " + errorStatusCode +" </h1><br/><h2>"+ errorStatusCode + " " + errorStatusMsg +"</h2></font></body></html>";
+			byte [] defaultHTMLBytes = new byte[(int)htmlResponse.length()];
+			defaultHTMLBytes = htmlResponse.getBytes();
+			System.out.println(" [Output from log4j] Response HTML : " + htmlResponse );
+			contentLength = htmlResponse.length();
+			String responseHeader = "";
+			if (isExpect) {
+				responseHeader += requestVersion + "100 Continue\r\n";
+			}
+			responseHeader += requestVersion + " " + errorStatusCode + " " + errorStatusMsg + "\r\n" + "Date: " + date + "\r\n" + "Content-Type: " + contentType + "\r\n" + "Content-Length: " + contentLength + "\r\n" + "Connection: close\r\n" + "\n";
+			System.out.println(" [Output from log4j] Response Header : " + responseHeader);
+
+			DataOutputStream dout = new DataOutputStream (clientSocket.getOutputStream());
+			dout.writeUTF(responseHeader);
+			if (! isHead) {
+				dout.write(defaultHTMLBytes);
+			}
+			dout.flush();
+			dout.close();		
+		}
+		catch ( Exception e ) {
+			logger.error(" [Output from log4j] Error while creating Error Response " + e );
+			System.err.println(" [Output from log4j] Error while creating Error Response " + e );
+		}
+	}
+
+	@SuppressWarnings("resource")
+	public void createFileResponse ( String absoluteFilePath , String requestVersion , Socket clientSocket ) {
+		try {
+			File fileRead = new File (absoluteFilePath);
+			System.out.println(" [Output from log4j] Absolute File Path : " + absoluteFilePath);
+			if(fileRead.canRead()){
+				// reading the requested resource 
+				FileInputStream fileStream = new FileInputStream (absoluteFilePath);
+				//byte[] fileBytes = new byte[fileStream.available()];
+				byte[] fileBytes = new byte[(int)fileRead.length()];
+				System.out.println(" [Output from log4j] FileStream Length : " + fileBytes.length);
+				System.out.println(" [Output from log4j] File Length : " + fileRead.length());
+				fileStream.read(fileBytes);
+
+				//String fileContent = new String (fileBytes);
+				//System.out.println(" [Output from log4j] File Content : " + fileBytes);
+
+				// creating response header 
+				String[] filePath = absoluteFilePath.split("\\.");
+				System.out.println(" [Output from log4j] FilePath Length : " + filePath.length);
+				/*for (String check : filePath){
+					System.out.println(" [Output from log4j] Array Element : " + check); 
+				}*/
+				String fileExtension = filePath [filePath.length - 1];
+
+				FileTypes fileType = FileTypes.valueOf(fileExtension) ;
+				String contentType = null;
+
+				switch (fileType) {
+				case jpg:
+					contentType = "image/jpeg";
+					break;
+				case png:
+					contentType = "image/png";
+					break;
+				case gif:
+					contentType = "image/gif";
+					break;
+				case txt:
+					contentType = "text/plain";
+					break;
+				case html:
+					contentType = "text/html";
+					break;
+				default:
+					contentType = "invalidtype";
+					break;
+				}
+
+				int contentLength = fileBytes.length;
+				//Date currentDate = new Date();
+				//String date = currentDate.toString();
+				String date = this.getCurrentDate();
+
+				String responseHeader = "";
+				if (isExpect) {
+					responseHeader += requestVersion + "100 Continue\r\n";
+				}
+				responseHeader += requestVersion + " 200 OK\r\n" + "Date: " + date + "\r\n" + "Content-Type: " + contentType + "\r\n" + "Content-Length: " + contentLength + "\r\n" + "Connection: close\r\n" + "\n";
+				System.out.println(" [Output from log4j] Response Header : " + responseHeader);
+				// returning data to Socket
+				DataOutputStream dout = new DataOutputStream (clientSocket.getOutputStream());
+				dout.writeUTF(responseHeader);
+				if (! isHead) {
+					dout.write(fileBytes);
+				}
+				dout.flush();
+				dout.close();
+			}
+			else {
+				// call function to create Permission denied error
+				int errorStatusCode = 403;
+				this.createErrorResponse(errorStatusCode, requestVersion, clientSocket);
+			}
+		}
+		catch (Exception e) {
+			logger.error(" [Output from log4j] Error while creating file response " + e);
+			System.err.println(" [Output from log4j] Error while creating file response " + e);
+		}
+	}
+
+	public boolean hashRequestData(String requestData, Socket clientSocket){
+		mapRequestData = new HashMap<String,String> ();
+		String[] requestLines = requestData.split("\t");
+		boolean isCorrect = true;
+		int iCount = 0;
+		try{
+			for (String retVal: requestLines){
+				// logger.info(" [Output from log4j Hash Map split for processed data " + retVal);
+				// System.out.println(" [Output from log4j Hash Map split for processed data " + retVal);
+				iCount++;
+				if(iCount == 1){
+					// checking for multiple spaces in a get request 
+					String[] subLine = retVal.split(" +");
+					// case for proper request GET path HTTP/*.*
+					if (subLine.length == 3) {
+						if (subLine[2].toLowerCase().equals("http/1.0") || subLine[2].toLowerCase().equals("http/1.1")){
+							this.mapRequestData.put("Method", subLine[0]);
+							this.mapRequestData.put("Path", subLine[1]);
+							this.mapRequestData.put("Version", subLine[2]);
+							isCorrect = true;
+						}
+						// case where GET path HTTP/*.* but not proper HTTP/*.*
+						else {
+							// call function to display error page for HTTP incorrect
+							int errorStatusCode = 505;
+							String requestVersion = subLine[2];
+							this.createErrorResponse(errorStatusCode, requestVersion, clientSocket);
+							isCorrect = false;
+						}
+					}
+					// case where improper request of length 1 or 3
+					else if (subLine.length == 1 || subLine.length > 3) {
+						// call function to display error page for Bad Request
+						int errorStatusCode = 400;
+						String requestVersion = "HTTP/1.1";
+						this.createErrorResponse(errorStatusCode, requestVersion, clientSocket);
+						isCorrect = false;
+					}
+					else if (subLine.length == 2){
+						// catch 2 special cases 
+						if (subLine[1].equalsIgnoreCase("/shutdown") || subLine[1].equalsIgnoreCase("/control")){
+							this.mapRequestData.put("Method", subLine[0]);
+							this.mapRequestData.put("Path", subLine[1]);
+							this.mapRequestData.put("Version", "HTTP/1.1");
+							isCorrect = true;	
+						}
+						else{
+							// case where request like GET HTTP/*.*
+							if (subLine[1].toLowerCase().equals("http/1.0") || subLine[1].toLowerCase().equals("http/1.1")){
+								this.mapRequestData.put("Method", subLine[0]);
+								this.mapRequestData.put("Path", "/");
+								this.mapRequestData.put("Version", subLine[1]);
+								isCorrect = true;
+							}
+							else {
+								int errorStatusCode = 0;
+								String requestVersion = null;
+								if (subLine[1].contains("HTTP/")){
+									errorStatusCode = 505;
+									requestVersion = subLine[1];
+									this.createErrorResponse(errorStatusCode, requestVersion, clientSocket);
+								}
+								else{
+									errorStatusCode = 400;
+									requestVersion = "HTTP/1.1";
+									this.createErrorResponse(errorStatusCode, requestVersion, clientSocket);
+								}
+								isCorrect = false;
+							}
+						}
+					}
+				}
+				else{
+					String[] subLine = retVal.split(": ");
+					// check process request data function
+					if(subLine.length == 2){
+						this.mapRequestData.put(subLine[0], subLine[1]);
+					}
+					else{
+						logger.info(" [Output from log4j Error in parsing of RequestData. Length of split " + subLine.length);
+						System.err.println(" [Output from log4j Error in parsing of RequestData. Length of split " + subLine.length);
+					}
+				}
+			}
+			logger.info(" [Output from log4j] Hash Map created for storing processed data " + mapRequestData);
+			System.out.println(" [Output from log4j] Hash Map created for storing processed data " + mapRequestData);
+		}
+		catch (Exception e){
+			logger.error(" [Output from log4j] Error while creating Map for storing processed data " + e);
+			System.out.println(" [Output from log4j] Error while creating Map for storing processed data " + e);
+			isCorrect = false;
+		}
+		return isCorrect;
+	}
+}

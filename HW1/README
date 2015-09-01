@@ -1,0 +1,37 @@
+Full name:  Aakriti Singla
+SEAS login: aakritis@seas.upenn.edu
+Web and application server, thread pool, APIs
+
+Which features did you implement? 
+	Entire Assignment
+	Test Servlets :
+		Test Servlet Set 1 : 
+			1. Cookie_TestServlet1.java, Cookie_TestServlet2.java, Cookie_TestServlet3.java
+					These classes test the functionality of cookies for the server
+			2. Session_TestServlet1.java, Session_TestServlet2.java, Session_TestServlet3.java
+					These classes test session. The session is not invalidated, thus session exists.
+			3. Demo_TestServlet.java
+					This is a basic Servlet
+			4. Busy_TestServlet.java
+					This is a busy Servlet
+	JUnit Test Cases : 
+		Class Name - ERISServerJUniTest.java
+			This class runs for the Worker Thread of the server and tests all the interfaces and classes testing the functionalities implemented in Milestone 2 HW1 
+	
+	Please note that the path for log4j Properties file in hardcoded in the Url to display the logger file.
+	All the files have been zipped under single folder.
+
+Did you complete any extra-credit tasks? If so, which ones?
+	None
+
+Any special instructions for building and running your solution?
+	NA
+Did you personally write _all_ the code you are submitting
+(other than code from the course web page)?
+	Yes
+
+Did you copy any code from the Internet, or from classmates?
+	No
+
+Did you collaborate with anyone on this assignment?
+	No

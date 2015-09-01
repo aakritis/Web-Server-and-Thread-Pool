@@ -1,0 +1,19 @@
+<web-app>
+	<display-name> Test servlet for CIS455</display-name>
+	<servlet>
+		<servlet-name>CalculatorServlet</servlet-name>
+		<servlet-class>edu.upenn.cis.cis455.webserver.CalculatorServlet</servlet-class>
+	</servlet>
+	<servlet-mapping>
+		<servlet-name>CalculatorServlet</servlet-name>
+		<url-pattern>calculate/*</url-pattern>
+	</servlet-mapping>
+	<servlet-mapping>
+		<servlet-name>CalculatorServlet</servlet-name>
+		<url-pattern>/examples/calculator/calculate/</url-pattern>
+	</servlet-mapping>
+	<servlet-mapping>
+		<servlet-name>default</servlet-name>
+		<url-pattern>*.html</url-pattern>
+	</servlet-mapping>
+</web-app>

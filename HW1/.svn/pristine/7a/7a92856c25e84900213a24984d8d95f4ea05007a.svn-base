@@ -1,0 +1,33 @@
+Full name:  Aakriti Singla
+SEAS login: aakritis@seas.upenn.edu
+
+Which features did you implement? 
+	Entire Assignment
+	Test Servlets
+	JUnit Test Cases 
+	Please note that the path for log4j Properties file in hardcoded in the Url to display the logger file.
+	All the files have been zipped under single folder.
+
+Did you complete any extra-credit tasks? If so, which ones?
+	None
+
+Any special instructions for building and running your solution?
+	Since Test Cases were not implemented for Milestone1, The below code in build.xml should be commented before running the assignment
+	    <!-- Commenting code for test code -->
+    	<!--
+        <antcall target="compilejavatest" />
+        <jar destfile="${test-lib.dir}${file.separator}webserver-test.jar" update="true">
+            <fileset dir="${test-classes.dir}">
+                <include name="**"/>
+              </fileset>
+        </jar>-->
+
+Did you personally write _all_ the code you are submitting
+(other than code from the course web page)?
+	Yes
+
+Did you copy any code from the Internet, or from classmates?
+	No
+
+Did you collaborate with anyone on this assignment?
+	No

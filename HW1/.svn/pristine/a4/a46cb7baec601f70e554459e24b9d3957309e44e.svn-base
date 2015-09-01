@@ -1,0 +1,37 @@
+package edu.upenn.cis.cis455.webserver;
+
+import org.apache.log4j.Logger;
+
+/**
+ * HTTPServer Class
+ * 
+ * About the problem we are solving:
+ * We try to create a ThreadPooled Server in Java to handle HTTP Request/Response problems. 
+ * We create a Daemon thread and a Worker thread and use a common queue(ArrayList here) 
+ * where the Daemon Thread pushes and Worker Thread consumes from.
+ * The delay added in the Worker thread ensures wait and notifyAll gets called.
+ * 
+ */
+public class HttpServer {
+	
+	// Using log4j framework for logging
+	static final Logger logger = Logger.getLogger(HttpServer.class);
+	
+	@SuppressWarnings("static-access")
+	public static void main (String args[]){
+		
+		int serverPort = 8080;
+		String homeDirectory = "/home/cis455/aakritis";
+		// remove / parameter in the root directory 
+		DaemonThread daemonThread = new DaemonThread (serverPort, homeDirectory);
+		Thread thread = new Thread (daemonThread,"Daemon Thread");
+		thread.start();
+		try{
+			thread.sleep(10*1000);
+		}
+		catch (InterruptedException e){
+			logger.error(" [Output from log4j] Error while thread in sleep state "+ e);
+			System.err.println(" [Output from log4j] Error while thread in sleep state "+ e);
+		}
+	}
+}
